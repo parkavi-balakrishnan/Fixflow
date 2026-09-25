@@ -49,6 +49,12 @@ class TroubleshootRequest(BaseModel):
     siis_response: Optional[SIISResponsePayload] = Field(
         None, description="Pre-cleaned SIIS knowledge store response payload"
     )
+    device: Optional[str] = Field(
+        None, description="Optional device name or form factor (e.g. Galaxy S24, Tablet, Watch)"
+    )
+    model: Optional[str] = Field(
+        None, description="Optional specific device model name"
+    )
 
 
 class HealthResponse(BaseModel):
@@ -79,7 +85,12 @@ async def troubleshoot_endpoint(
         siis_dict = req.siis_response.model_dump()
 
     try:
-        result, telemetry = pipeline.troubleshoot(req.query, siis_dict)
+        result, telemetry = pipeline.troubleshoot(
+            req.query,
+            siis_dict,
+            device=req.device,
+            model=req.model,
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -90,5 +101,9 @@ async def troubleshoot_endpoint(
     response.headers["X-Cache-Hit"] = str(telemetry.get("cache_hit", False)).lower()
     response.headers["X-Latency-Ms"] = str(telemetry.get("latency_ms", 0.0))
     response.headers["X-Source"] = str(telemetry.get("source", "unknown"))
+    if "retrieval_latency_ms" in telemetry:
+        response.headers["X-Retrieval-Latency-Ms"] = str(telemetry.get("retrieval_latency_ms", 0.0))
+        response.headers["X-Retrieval-Score"] = str(telemetry.get("retrieval_score", 0.0))
+        response.headers["X-Retrieved-Doc-Id"] = str(telemetry.get("retrieved_doc_id", ""))
 
     return result
