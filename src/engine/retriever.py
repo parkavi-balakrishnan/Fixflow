@@ -213,12 +213,18 @@ class SIISRetriever:
             dtype=float,
         )
 
-        # 4. Hybrid Linear Fusion
-        hybrid_scores = (
+        # 4. Hybrid Linear Fusion with Relevance Gate
+        relevance = (
             self.semantic_weight * semantic_scores
             + self.bm25_weight * bm25_scores
-            + self.device_weight * device_scores
         )
+        # Apply device bonus only when document has textual/semantic relevance
+        device_bonus = np.where(
+            relevance > 0.05,
+            self.device_weight * (device_scores - 0.5),
+            0.0,
+        )
+        hybrid_scores = relevance + device_bonus
 
         # Select Top Candidate Pool for Reranking
         pool_size = min(top_k + 4, len(docs))
@@ -284,42 +290,45 @@ class SIISRetriever:
 
         for idx in candidate_indices:
             doc = docs[idx]
-            final_score = float(base_scores[idx])
+            base_rel = float(base_scores[idx])
+            final_score = base_rel
 
-            title_lower = doc.title.lower()
-            title_words = set(re.findall(r"[a-z0-9]+", title_lower))
+            # Only apply rerank domain bonuses if query has baseline relevance to the corpus
+            if base_rel > 0.05:
+                title_lower = doc.title.lower()
+                title_words = set(re.findall(r"[a-z0-9]+", title_lower))
 
-            # Rule 1: Hardware display failure intent check
-            # When screen is completely black/blank/dark/cracked, downweight software transfer tutorials
-            if any(w in q_lower for w in ["black", "blank", "dark", "cracked", "flicker"]) and "secure folder" in title_lower:
-                final_score -= 0.30
+                # Rule 1: Hardware display failure intent check
+                # When screen is completely black/blank/dark/cracked, downweight software transfer tutorials
+                if any(w in q_lower for w in ["black", "blank", "dark", "cracked", "flicker"]) and "secure folder" in title_lower:
+                    final_score -= 0.30
 
-            # Rule 2: High-precision symptom alignment bonuses
-            if "email" in q_lower and "email" in title_lower:
-                final_score += 0.25
-            if "rotate" in q_lower and "rotate" in title_lower:
-                final_score += 0.25
-            if any(w in q_lower for w in ["tv", "smart view", "mirror"]) and any(w in title_lower for w in ["tv", "mirror"]):
-                final_score += 0.25
-            if "camera" in q_lower and "camera" in title_lower:
-                final_score += 0.25
-            if any(w in q_lower for w in ["delay", "lag", "responsiveness"]) and "touchscreen" in title_lower:
-                final_score += 0.25
-            if any(w in q_lower for w in ["crack", "cracked", "bleed", "bleeding", "broken"]) and "cracked" in title_lower:
-                final_score += 0.25
+                # Rule 2: High-precision symptom alignment bonuses
+                if "email" in q_lower and "email" in title_lower:
+                    final_score += 0.25
+                if "rotate" in q_lower and "rotate" in title_lower:
+                    final_score += 0.25
+                if any(w in q_lower for w in ["tv", "smart view", "mirror"]) and any(w in title_lower for w in ["tv", "mirror"]):
+                    final_score += 0.25
+                if "camera" in q_lower and "camera" in title_lower:
+                    final_score += 0.25
+                if any(w in q_lower for w in ["delay", "lag", "responsiveness"]) and "touchscreen" in title_lower:
+                    final_score += 0.25
+                if any(w in q_lower for w in ["crack", "cracked", "bleed", "bleeding", "broken"]) and "cracked" in title_lower:
+                    final_score += 0.25
 
-            # Feature 3: Title Token Overlap Bonus (up to +0.20)
-            common_title_words = q_words.intersection(title_words)
-            if common_title_words:
-                title_overlap_ratio = len(common_title_words) / max(2, len(title_words))
-                final_score += 0.20 * title_overlap_ratio
+                # Feature 3: Title Token Overlap Bonus (up to +0.20)
+                common_title_words = q_words.intersection(title_words)
+                if common_title_words:
+                    title_overlap_ratio = len(common_title_words) / max(2, len(title_words))
+                    final_score += 0.20 * title_overlap_ratio
 
-            # Feature 4: Model Specific Exact Match Bonus (+0.10)
-            doc_text_lower = doc.searchable_text.lower()
-            for model in device_ctx.models:
-                if model in doc_text_lower:
-                    final_score += 0.10
-                    break
+                # Feature 4: Model Specific Exact Match Bonus (+0.10)
+                doc_text_lower = doc.searchable_text.lower()
+                for model in device_ctx.models:
+                    if model in doc_text_lower:
+                        final_score += 0.10
+                        break
 
             reranked.append(
                 ScoredCandidate(

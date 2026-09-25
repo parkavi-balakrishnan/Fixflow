@@ -189,9 +189,14 @@ class SIISPreprocessor:
         if not lines:
             return []
 
-        # Drop the header line if it contains the device categories prefix
+        # Drop or split the header line if it contains the device categories prefix
         if re.search(r"\(([^)]+)\):?", lines[0]):
-            lines = lines[1:]
+            header_match = re.search(r"\(([^)]+)\):?\s*(.*)", lines[0])
+            rest_of_line = header_match.group(2).strip() if header_match else ""
+            if rest_of_line:
+                lines = [rest_of_line] + lines[1:]
+            else:
+                lines = lines[1:]
 
         sections: List[KnowledgeSection] = []
         current_title = default_title
