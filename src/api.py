@@ -5,13 +5,19 @@ Provides:
 - POST /v1/troubleshoot: Pure JSON endpoint returning ContextDeeplinkResponse
 """
 from contextlib import asynccontextmanager
+import logging
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, HTTPException, Response, status
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, field_validator
 
+from src.config import API_TITLE, API_VERSION, MAX_QUERY_LENGTH
 from src.engine.pipeline import FixFlowPipeline
+from src.engine.validator import detect_url_leakage, validate_response
 from src.schema import ContextDeeplinkResponse
+
+logger = logging.getLogger("fixflow.api")
 
 # Global pipeline instance
 _pipeline: Optional[FixFlowPipeline] = None
@@ -27,14 +33,16 @@ def get_pipeline() -> FixFlowPipeline:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Pre-warm pipeline and cache at startup
-    get_pipeline()
+    pipeline = get_pipeline()
+    logger.info("FixFlow pipeline initialized and prewarmed.")
     yield
+    logger.info("FixFlow API shutting down.")
 
 
 app = FastAPI(
-    title="FixFlow Smart Guided Troubleshooting Engine",
-    description="Samsung PRISM Hackathon 2026 Theme 2 Implementation",
-    version="1.0.0",
+    title=API_TITLE,
+    description="Samsung PRISM Hackathon 2026 Theme 2 Smart Guided Troubleshooting Implementation",
+    version=API_VERSION,
     lifespan=lifespan,
 )
 
@@ -55,6 +63,26 @@ class TroubleshootRequest(BaseModel):
     model: Optional[str] = Field(
         None, description="Optional specific device model name"
     )
+
+    @field_validator("query")
+    @classmethod
+    def validate_query(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("Query cannot be empty or whitespace only")
+        if len(stripped) > MAX_QUERY_LENGTH:
+            raise ValueError(f"Query length exceeds maximum limit of {MAX_QUERY_LENGTH} characters")
+        return stripped
+
+    @field_validator("device", "model")
+    @classmethod
+    def sanitize_optional_str(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        stripped = v.strip()
+        if not stripped:
+            return None
+        return stripped[:200]
 
 
 class HealthResponse(BaseModel):
@@ -92,12 +120,13 @@ async def troubleshoot_endpoint(
             model=req.model,
         )
     except Exception as e:
+        logger.error(f"Pipeline troubleshooting error: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Troubleshooting engine error: {str(e)}",
         )
 
-    # Attach telemetry headers for performance tracking
+    # Attach telemetry headers for performance tracking and observability
     response.headers["X-Cache-Hit"] = str(telemetry.get("cache_hit", False)).lower()
     response.headers["X-Latency-Ms"] = str(telemetry.get("latency_ms", 0.0))
     response.headers["X-Source"] = str(telemetry.get("source", "unknown"))
@@ -105,5 +134,14 @@ async def troubleshoot_endpoint(
         response.headers["X-Retrieval-Latency-Ms"] = str(telemetry.get("retrieval_latency_ms", 0.0))
         response.headers["X-Retrieval-Score"] = str(telemetry.get("retrieval_score", 0.0))
         response.headers["X-Retrieved-Doc-Id"] = str(telemetry.get("retrieved_doc_id", ""))
+
+    # Gate & Validation observability headers
+    val_res = validate_response(result)
+    response.headers["X-Response-Valid"] = str(val_res.is_valid).lower()
+
+    # Gate G5 URL leak verification
+    raw_json = result.model_dump_json()
+    leaks = detect_url_leakage(raw_json)
+    response.headers["X-Gate-G5-Clean"] = "true" if len(leaks) == 0 else "false"
 
     return result

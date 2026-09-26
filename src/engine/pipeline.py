@@ -15,6 +15,7 @@ import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from src.config import DATA_DIR, DEFAULT_CACHE_PREWARM, DEFAULT_CACHE_THRESHOLD
 from src.engine.deeplink_matcher import DeeplinkMatcher
 from src.engine.extractor import SIISExtractor
 from src.engine.retriever import SIISRetriever
@@ -22,19 +23,14 @@ from src.engine.semantic_cache import SemanticCache
 from src.engine.validator import ResponseValidator, validate_response
 from src.schema import ContextDeeplinkResponse
 
-DATA_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "data",
-)
-
 
 class FixFlowPipeline:
     """End-to-end pipeline orchestrating cache, retrieval, extraction, and validation."""
 
     def __init__(
         self,
-        cache_threshold: float = 0.50,
-        prewarm: bool = True,
+        cache_threshold: float = DEFAULT_CACHE_THRESHOLD,
+        prewarm: bool = DEFAULT_CACHE_PREWARM,
         data_dir: str = DATA_DIR,
     ):
         self.data_dir = data_dir
