@@ -17,10 +17,15 @@ from typing import Dict, List, Optional
 
 
 def normalize_query_text(text: str) -> str:
-    """Normalizes query text by removing leading numbers, quotation marks, and extra whitespace."""
-    cleaned = re.sub(r'^\d+\.\s*', '', text.strip())
+    """Remove list numbering and normalize whitespace without changing meaning."""
+    cleaned = re.sub(r'(?m)^\s*\d+\.\s*', '', text.strip())
     cleaned = cleaned.strip('"\' ')
     return " ".join(cleaned.split())
+
+
+def _variation_key(text: str) -> str:
+    """Return a punctuation-insensitive key for variation deduplication."""
+    return " ".join(re.sub(r"[^a-zA-Z0-9]+", " ", text).lower().split())
 
 
 # Curated, multi-register variations for the 20 official Samsung queries
@@ -103,7 +108,7 @@ _OFFICIAL_QUERY_VARIATIONS: Dict[int, List[str]] = {
         "Screen display shrunk down to a small area and won't fill the entire screen on new phone.",
         "phone main screen is tiny and wont expand to full size display",
         "Samsung phone small screen view won't expand full screen display mode",
-        "Why is my main screen tiny and stuck in one-handed or shrunken mode?",
+        "Why is my main screen stuck tiny instead of filling the whole display?",
         "How to restore full screen display on Samsung phone when screen is small?",
         "Phone display remains minimized and does not scale to full panel dimensions.",
         "Galaxy phone main display stuck in compact window size won't stretch full",
@@ -177,7 +182,7 @@ _OFFICIAL_QUERY_VARIATIONS: Dict[int, List[str]] = {
         "Samsung Galaxy cracked screen shattered glass display replacement repair",
         "My phone screen is completely cracked and shattered, I can't touch or use it at all!",
         "What are my repair options for a completely cracked Galaxy phone screen?",
-        "Severe physical impact resulting in shattered display glass on Galaxy smartphone.",
+        "Galaxy smartphone display glass fully shattered and screen completely cracked.",
         "Galaxy phone broken glass display shattered total screen crack",
         "Device unusable due to totally cracked display screen on Galaxy phone",
     ],
@@ -186,11 +191,11 @@ _OFFICIAL_QUERY_VARIATIONS: Dict[int, List[str]] = {
         "Galaxy S26 Ultra displays a blue or black screen with tiny text and refuses to boot.",
         "My S26 Ultra won't start up, it just shows tiny error text on a blue screen.",
         "s26 ultra shows blue black screen with tiny text wont start holding power button doesnt work",
-        "Samsung S26 Ultra blue screen tiny text boot loop startup failure",
+        "Samsung S26 Ultra blue screen tiny text startup failure",
         "My S26 Ultra is stuck on a blue screen with tiny text and holding the power button does nothing!",
         "How to recover a Galaxy S26 Ultra stuck on blue or black screen with small system text?",
         "Device boots to error console screen with small font on blue background fail to launch OS.",
-        "Galaxy S26 Ultra boot failure blue screen small text emergency recovery",
+        "Galaxy S26 Ultra unable to start with blue screen and small system text",
         "Screen blue with tiny text on S26 Ultra phone won't turn on past error",
     ],
     # 15. Screen flashes quickly in milliseconds when plugging charger
@@ -213,7 +218,7 @@ _OFFICIAL_QUERY_VARIATIONS: Dict[int, List[str]] = {
         "Samsung Galaxy S24 blank dark screen no content Smart Switch data transfer blocked",
         "My Galaxy S24 screen is pitch dark with random scrolling and I can't transfer any of my data!",
         "How to backup data from a Galaxy S24 whose screen is dark with occasional scrolling?",
-        "Display panel blacked out on Galaxy S24 with phantom scrolling touch failure.",
+        "Galaxy S24 display stays black while the page occasionally scrolls.",
         "Galaxy S24 blank screen scrolling glitch unable to see content or transfer files",
         "Screen dark and blank on S24 phone Smart Switch data transfer impossible",
     ],
@@ -261,7 +266,7 @@ _OFFICIAL_QUERY_VARIATIONS: Dict[int, List[str]] = {
         "Samsung Galaxy S24 Ultra black screen phone working ringing sound no damage",
         "My Galaxy S24 Ultra rings and vibrates but the screen is totally black and won't show anything!",
         "How to fix black screen of death on Galaxy S24 Ultra when phone is still on and ringing?",
-        "No display output on S24 Ultra while motherboard and audio remain active without physical defect.",
+        "Galaxy S24 Ultra has no display output but still powers on and rings.",
         "Galaxy S24 Ultra screen unlit phone rings incoming calls sound active display dark",
         "Screen black on S24 Ultra device active and ringing but no image on display",
     ],
@@ -272,7 +277,11 @@ class QueryVariationGenerator:
     """Generates 8-10 deterministic, multi-register variations for troubleshooting queries."""
 
     def __init__(self, official_variations: Optional[Dict[int, List[str]]] = None):
-        self.official_variations = official_variations or _OFFICIAL_QUERY_VARIATIONS
+        self.official_variations = (
+            _OFFICIAL_QUERY_VARIATIONS
+            if official_variations is None
+            else official_variations
+        )
 
     def generate_variations(self, query: str, query_index: Optional[int] = None) -> List[str]:
         """Generates 8-10 unique, deterministic query variations for a given query.
@@ -280,7 +289,7 @@ class QueryVariationGenerator:
         Guarantees:
         - Exactly 8 to 10 variations returned.
         - All variations are non-empty strings.
-        - Strictly deduplicated (case-insensitive).
+        - Strictly deduplicated (case- and punctuation-insensitive).
         - Preserves original symptom intent.
         """
         # If query_index is provided and valid, use the curated official set
@@ -299,40 +308,47 @@ class QueryVariationGenerator:
     def _find_matching_official_index(self, norm_query: str) -> Optional[int]:
         """Finds if a query corresponds to one of the 20 official benchmark queries."""
         # Keyword fingerprinting for each of the 20 official queries
-        fingerprints = [
-            (1, ["a11", "gmail", "tablet", "email"]),
-            (2, ["s22", "white", "smart tutor", "stock"]),
-            (3, ["flip 7", "black", "smart switch", "transfer"]),
-            (4, ["a15", "a16", "month", "black"]),
-            (5, ["qr", "smart switch", "tablet", "s25"]),
-            (6, ["three", "app icons", "dark", "tablet"]),
-            (7, ["small", "fill", "whole display", "expand"]),
-            (8, ["inner screen", "flip 7", "cover screen", "touch"]),
-            (9, ["flip 6", "flickers", "blank", "open it"]),
-            (10, ["flip 6", "half black", "one side"]),
-            (11, ["floating circle", "s25", "shortcuts", "remove it"]),
-            (12, ["s22", "carrier", "activation message"]),
-            (13, ["completely cracked", "total crack"]),
-            (14, ["s26 ultra", "tiny text", "blue", "holding"]),
-            (15, ["milliseconds", "plug", "charger", "flashes"]),
-            (16, ["s24", "scrolling", "no visible content"]),
-            (17, ["flip 7", "crease", "where it folds", "cracked again"]),
-            (18, ["a17", "distorted", "diagnostic"]),
-            (19, ["s22", "inputs are delayed", "laggy", "touch"]),
-            (20, ["s24 ultra", "rings", "no physical damage", "completely black"]),
-        ]
+        # Give distinctive details more weight than common words such as
+        # "screen", "black", or a shared Galaxy model name. This keeps, for
+        # example, the three Flip 7 cases from matching one another.
+        fingerprints = {
+            1: ("a115g", "gmail", "tablet", "email"),
+            2: ("s22", "white", "stock price", "smart tutor"),
+            3: ("flip 7", "smart switch", "transfer my data"),
+            4: ("a15/a16", "month", "black", "turn it on"),
+            5: ("qr code", "smart switch", "tablet", "s25"),
+            6: ("three app icons", "tablet", "dark", "won't open"),
+            7: ("small", "full size", "main screen", "display"),
+            8: ("flip 7", "inner screen", "outer cover screen", "touch"),
+            9: ("flip 6", "flickers", "open it", "settings"),
+            10: ("flip 6", "half black", "one side", "other side"),
+            11: ("s25", "floating circle", "shortcuts", "remove it"),
+            12: ("s22", "carrier", "activation message", "blank"),
+            13: ("completely cracked", "total crack", "can't use"),
+            14: ("s26 ultra", "tiny text", "blue", "holding the power"),
+            15: ("s***** ultra", "milliseconds", "charger", "flashes"),
+            16: ("s24", "occasional scrolling", "smart switch", "dark screen"),
+            17: ("flip 7", "cracked again", "touch", "folds"),
+            18: ("a17", "distorted", "diagnostic"),
+            19: ("s22", "inputs are delayed", "laggy", "touch responsiveness"),
+            20: ("s24 ultra", "rings", "no physical damage", "completely black"),
+        }
 
-        for idx, kws in fingerprints:
-            if sum(1 for kw in kws if kw in norm_query) >= 2:
-                return idx
-        return None
+        # Prefer the strongest matching fingerprint. Requiring multiple
+        # distinctive terms avoids classifying short or unrelated queries.
+        ranked = [
+            (sum(1 for phrase in phrases if phrase in norm_query), index)
+            for index, phrases in fingerprints.items()
+        ]
+        score, index = max(ranked, default=(0, 0))
+        return index if score >= 2 else None
 
     def _generate_rule_based_variations(self, query: str) -> List[str]:
         """Generates deterministic variations for arbitrary/unseen queries."""
         clean = normalize_query_text(query)
+        if not clean.split():
+            clean = "Samsung device issue"
         words = clean.split()
-        if not words:
-            return [f"Device issue: {query}"] * 8
 
         variations = [
             f"Samsung troubleshooting: {clean}",
@@ -349,32 +365,42 @@ class QueryVariationGenerator:
 
     def _finalize_variations(self, original_query: str, candidates: List[str]) -> List[str]:
         """Ensures deduplication, proper count (8-10), and absence of original query."""
-        orig_norm = normalize_query_text(original_query).lower()
-        seen = {orig_norm}
+        orig_norm = _variation_key(normalize_query_text(original_query))
+        seen = {orig_norm} if orig_norm else set()
         final: List[str] = []
 
         for c in candidates:
             c_clean = normalize_query_text(c)
-            c_norm = c_clean.lower()
+            c_norm = _variation_key(c_clean)
             if c_clean and c_norm not in seen:
                 seen.add(c_norm)
                 final.append(c_clean)
             if len(final) == 10:
                 break
 
-        # Ensure between 8 and 10
-        if len(final) < 8:
-            # Deterministic padding if needed
-            templates = [
-                f"How to fix {orig_norm}",
-                f"Samsung device {orig_norm} problem",
-                f"Galaxy troubleshooting {orig_norm}",
-            ]
-            for t in templates:
-                if t.lower() not in seen:
-                    seen.add(t.lower())
-                    final.append(t)
-                if len(final) >= 8:
-                    break
+        # Keep the documented 8-10 guarantee even for custom/short candidate
+        # lists. These deterministic forms restate the supplied symptom
+        # without inventing a new one.
+        seed = normalize_query_text(original_query) or "Samsung device issue"
+        templates = [
+            f"How can I troubleshoot {seed}?",
+            f"Samsung device problem: {seed}",
+            f"Galaxy troubleshooting help for {seed}",
+            f"What should I do when {seed}?",
+            f"Help me resolve this Samsung issue: {seed}",
+            f"Troubleshoot this device symptom: {seed}",
+            f"Samsung support question about {seed}",
+            f"My Galaxy needs help with this issue: {seed}",
+            f"Steps to address this device problem: {seed}",
+            f"Please help fix this Samsung symptom: {seed}",
+        ]
+        for candidate in templates:
+            if len(final) >= 8:
+                break
+            cleaned = normalize_query_text(candidate)
+            key = _variation_key(cleaned)
+            if cleaned and key not in seen:
+                seen.add(key)
+                final.append(cleaned)
 
         return final[:10]
