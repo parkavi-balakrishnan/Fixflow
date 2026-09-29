@@ -22,7 +22,7 @@ PROCESSED_KNOWLEDGE_DIR = os.path.join(DATA_DIR, "processed_knowledge")
 PROCESSED_SIIS_PATH = os.path.join(PROCESSED_KNOWLEDGE_DIR, "processed_siis.json")
 
 # Cache configuration
-DEFAULT_CACHE_THRESHOLD: float = float(os.getenv("FIXFLOW_CACHE_THRESHOLD", "0.70"))
+DEFAULT_CACHE_THRESHOLD: float = float(os.getenv("FIXFLOW_CACHE_THRESHOLD", "0.40"))
 DEFAULT_CACHE_PREWARM: bool = os.getenv("FIXFLOW_CACHE_PREWARM", "true").lower() in ("1", "true", "yes")
 
 # Retrieval configuration

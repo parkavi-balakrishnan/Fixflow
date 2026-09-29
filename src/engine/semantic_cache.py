@@ -31,7 +31,7 @@ def normalize_query(query: str) -> str:
 class SemanticCache:
     """Dual-tier fast-path semantic cache for troubleshooting responses."""
 
-    def __init__(self, similarity_threshold: float = 0.50):
+    def __init__(self, similarity_threshold: float = 0.40):
         self.similarity_threshold = similarity_threshold
         # L1: normalized_query -> ContextDeeplinkResponse
         self._exact_cache: Dict[str, ContextDeeplinkResponse] = {}
