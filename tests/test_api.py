@@ -71,3 +71,32 @@ def test_troubleshoot_unseen_scenario_and_repeat_cache(client):
     resp2 = client.post("/v1/troubleshoot", json={"query": unseen_payload["query"]})
     assert resp2.status_code == 200
     assert resp2.headers.get("x-cache-hit") == "true"
+
+
+def test_troubleshoot_whitespace_query_returns_422(client):
+    """Empty or whitespace-only queries must fail validation with HTTP 422."""
+    resp = client.post("/v1/troubleshoot", json={"query": "   \t\n  "})
+    assert resp.status_code == 422
+
+
+def test_troubleshoot_query_too_long_returns_422(client):
+    """Excessively long queries exceeding limit must fail validation with HTTP 422."""
+    giant_query = "screen broken " * 300
+    resp = client.post("/v1/troubleshoot", json={"query": giant_query})
+    assert resp.status_code == 422
+
+
+def test_troubleshoot_observability_headers(client):
+    """Verifies all telemetry and gate validation headers are present."""
+    payload = {
+        "query": "The mobile phone screen is cracked and flashes intermittently.",
+        "device": "  Galaxy S24  ",
+        "model": "  SM-S928B  ",
+    }
+    resp = client.post("/v1/troubleshoot", json=payload)
+    assert resp.status_code == 200
+    assert "x-cache-hit" in resp.headers
+    assert "x-latency-ms" in resp.headers
+    assert "x-source" in resp.headers
+    assert resp.headers.get("x-response-valid") == "true"
+    assert resp.headers.get("x-gate-g5-clean") == "true"
