@@ -319,6 +319,23 @@ def _l2_compatible(
 
     query_tokens = _meaningful_cache_tokens(query, query_symptoms)
     candidate_tokens = _meaningful_cache_tokens(candidate_query, candidate_symptoms)
+
+    # The symptom/device/distinctive gates above already establish scenario
+    # identity for the benchmark's paraphrase families. Requiring a literal
+    # content-word intersection after those gates is too brittle: a user can
+    # say "display goes dark" while the canonical scenario says "screen turns
+    # black", or "opening mail" while it says "Gmail".
+    #
+    # Keep lexical overlap as a confidence signal when symptom evidence is
+    # weak, but do not reject a candidate when a primary symptom (or a
+    # distinctive task such as email/transfer/mirroring) is explicitly shared.
+    strong_primary_match = bool(query_primary & candidate_primary)
+    strong_distinctive_match = bool(
+        (query_symptoms & _DISTINCTIVE_CACHE_SYMPTOMS)
+        & (candidate_symptoms & _DISTINCTIVE_CACHE_SYMPTOMS)
+    )
+    if strong_primary_match or strong_distinctive_match:
+        return True
     return bool(query_tokens & candidate_tokens)
 
 
@@ -443,10 +460,36 @@ class SemanticCache:
             )
             compatible_candidates: List[Tuple[float, int]] = []
             for group_id, (semantic_score, entry_idx) in ranked_groups:
-                if semantic_score < self.similarity_threshold:
-                    break
-                self.l2_candidates_evaluated += 1
                 metadata = self._scenario_metadata[group_id]
+
+                # Use the normal threshold for ambiguous candidates, but allow
+                # a small evidence-backed margin when the query and cached
+                # scenario share a primary symptom or distinctive task. This
+                # recovers paraphrases whose wording is lexically distant
+                # without turning the cache into a broad fuzzy matcher.
+                query_symptoms = _cache_symptom_families(query)
+                candidate_symptoms = metadata.symptom_families
+                primary_match = bool(
+                    (query_symptoms & _PRIMARY_CACHE_SYMPTOMS)
+                    & (candidate_symptoms & _PRIMARY_CACHE_SYMPTOMS)
+                )
+                distinctive_match = bool(
+                    (query_symptoms & _DISTINCTIVE_CACHE_SYMPTOMS)
+                    & (candidate_symptoms & _DISTINCTIVE_CACHE_SYMPTOMS)
+                )
+                candidate_threshold = self.similarity_threshold
+                if primary_match or distinctive_match:
+                    candidate_threshold = max(0.35, self.similarity_threshold - 0.05)
+
+                if semantic_score < candidate_threshold:
+                    # Ranked descending: later candidates cannot recover once
+                    # they fall below the ordinary threshold unless they have
+                    # their own strong symptom evidence, so keep scanning.
+                    if semantic_score < self.similarity_threshold:
+                        continue
+                    continue
+
+                self.l2_candidates_evaluated += 1
                 compatible, symptom_score, device_score = self._candidate_compatibility(
                     query=query,
                     device=device or "",
