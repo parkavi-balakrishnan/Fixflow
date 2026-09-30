@@ -124,3 +124,7 @@ Recommended follow-up is a labeled retrieval/deeplink relevance evaluation, clea
 - [Detailed project handover](docs/PROJECT_DETAILS.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Development log](docs/DEVELOPMENT_LOG.md)
+
+
+## Demo Video
+[Watch the FixFlow Demo Video](https://drive.google.com/file/d/11pl5hDF-wlilE2IsK0x64KEpG8sxf1s4/view?usp=drivesdk)
