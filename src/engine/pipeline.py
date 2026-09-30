@@ -15,16 +15,13 @@ import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from src.config import DATA_DIR, DEFAULT_CACHE_PREWARM, DEFAULT_CACHE_THRESHOLD
 from src.engine.deeplink_matcher import DeeplinkMatcher
 from src.engine.extractor import SIISExtractor
+from src.engine.retriever import SIISRetriever
 from src.engine.semantic_cache import SemanticCache
 from src.engine.validator import ResponseValidator, validate_response
 from src.schema import ContextDeeplinkResponse
-
-DATA_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "data",
-)
 
 
 class FixFlowPipeline:
@@ -32,8 +29,8 @@ class FixFlowPipeline:
 
     def __init__(
         self,
-        cache_threshold: float = 0.50,
-        prewarm: bool = True,
+        cache_threshold: float = DEFAULT_CACHE_THRESHOLD,
+        prewarm: bool = DEFAULT_CACHE_PREWARM,
         data_dir: str = DATA_DIR,
     ):
         self.data_dir = data_dir
@@ -41,6 +38,7 @@ class FixFlowPipeline:
         self.extractor = SIISExtractor(self.matcher)
         self.validator = ResponseValidator()
         self.cache = SemanticCache(similarity_threshold=cache_threshold)
+        self.retriever = SIISRetriever(data_dir=data_dir)
 
         # In-memory index of the 20 SIIS responses for fast retrieval if payload omitted
         self.known_siis: List[Dict[str, Any]] = []
@@ -101,8 +99,13 @@ class FixFlowPipeline:
         self,
         query: str,
         siis_response: Optional[Dict[str, Any]] = None,
+        device: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> Tuple[ContextDeeplinkResponse, Dict[str, Any]]:
         """Processes a natural language query and returns a validated ContextDeeplinkResponse.
+        
+        Flow:
+            User Query → Cache → RAG Retrieval → Relevant SIIS Knowledge → Existing Extractor → Existing Deeplink Matcher → Existing Validator → Cache → Final JSON.
         
         Returns:
             (ContextDeeplinkResponse, telemetry_metadata)
@@ -119,10 +122,20 @@ class FixFlowPipeline:
                 "source": "semantic_cache",
             }
 
-        # Step 2: Resolve SIIS Context
+        # Step 2: Resolve SIIS Context via RAG Retrieval if not supplied
         siis_payload = siis_response
+        retrieval_meta = {}
         if siis_payload is None:
-            siis_payload = self._retrieve_closest_siis(query)
+            effective_device = device or model
+            retrieval_res = self.retriever.retrieve(query, device=effective_device)
+            siis_payload = retrieval_res.best_siis_response
+            retrieval_meta = {
+                "retrieval_latency_ms": retrieval_res.telemetry.get("latency_ms", 0.0),
+                "retrieval_score": retrieval_res.top1_score,
+                "retrieved_doc_id": retrieval_res.matched_doc.doc_id,
+                "retrieved_title": retrieval_res.matched_doc.title,
+                "retrieval_method": retrieval_res.telemetry.get("retrieval_method", "hybrid_reranked"),
+            }
 
         # Step 3: Extract Structure & Match Deeplinks
         raw_response = self.extractor.extract(query, siis_payload)
@@ -130,7 +143,6 @@ class FixFlowPipeline:
         # Step 4: Validate against Schema & Rubric Rules
         val_result = self.validator.validate(raw_response)
         if not val_result.is_valid or val_result.validated_response is None:
-            # Fallback safe response if unexpected validation issue
             final_response = raw_response
         else:
             final_response = val_result.validated_response
@@ -142,23 +154,11 @@ class FixFlowPipeline:
         return final_response, {
             "cache_hit": False,
             "latency_ms": round(total_lat, 2),
-            "source": "full_pipeline",
+            "source": "rag_pipeline" if not siis_response else "full_pipeline",
+            **retrieval_meta,
         }
 
-    def _retrieve_closest_siis(self, query: str) -> Dict[str, Any]:
-        """Finds closest SIIS response from known catalog if none provided."""
-        if not self.known_siis:
-            return {"title": "Device Troubleshooting", "content": "Open Settings. Tap General management."}
-
-        # Check keyword matches
-        q_lower = query.lower()
-        for item in self.known_siis:
-            orig = item.get("original_query", "").lower()
-            # Simple token overlap check
-            q_words = set(q_lower.split())
-            orig_words = set(orig.split())
-            if len(q_words.intersection(orig_words)) >= 3:
-                return item["siis_response"]
-
-        # Default to first SIIS response if no close match
-        return self.known_siis[0]["siis_response"]
+    def _retrieve_closest_siis(self, query: str, device: Optional[str] = None) -> Dict[str, Any]:
+        """Finds closest SIIS response using the enterprise hybrid RAG retrieval layer."""
+        res = self.retriever.retrieve(query, device=device)
+        return res.best_siis_response
